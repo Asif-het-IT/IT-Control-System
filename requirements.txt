@@ -1,0 +1,48 @@
+# GUI & Images
+customtkinter==5.2.2
+Pillow>=10.0.0
+PySide6>=6.5.0
+
+# Networking / Remote
+paramiko>=3.4.3
+pysmb>=1.2.0
+requests>=2.32.0
+
+# Excel / Data
+openpyxl==3.1.2
+pandas
+pytz
+python-dateutil
+
+# System / Monitoring
+psutil
+speedtest-cli
+
+# Charts
+matplotlib
+
+# Clipboard
+pyperclip
+
+# Email
+yagmail
+keyring
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+
+# Scheduling
+apscheduler>=3.10.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Additional utilities
+pathlib2>=2.3.0
+typing-extensions>=4.8.0

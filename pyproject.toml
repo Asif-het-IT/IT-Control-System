@@ -1,0 +1,141 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "het-it-control-system"
+version = "1.0.0"
+description = "Enterprise IT automation and monitoring system"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.12.0",
+    "apscheduler>=3.10.0",
+    "psutil",
+    "speedtest-cli",
+    "matplotlib",
+    "pandas",
+    "openpyxl>=3.1.2",
+    "paramiko>=3.4.3",
+    "pysmb>=1.2.0",
+    "requests>=2.32.0",
+    "yagmail",
+    "keyring",
+    "python-dotenv>=1.0.0",
+    "PySide6>=6.5.0",
+    "customtkinter>=5.2.2",
+    "Pillow>=10.0.0",
+    "pyperclip",
+    "pytz",
+    "python-dateutil",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/het-it-control-system"
+Repository = "https://github.com/your-org/het-it-control-system"
+Issues = "https://github.com/your-org/het-it-control-system/issues"
+
+[project.scripts]
+het-control = "run:main"
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.setuptools.package-dir]
+"" = "."
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "speedtest.*",
+    "matplotlib.*",
+    "pandas.*",
+    "openpyxl.*",
+    "paramiko.*",
+    "pysmb.*",
+    "yagmail.*",
+    "keyring.*",
+    "PySide6.*",
+    "customtkinter.*",
+]
+ignore_missing_imports = true
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 100
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = [
+    "tests",
+]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "*/tests/*",
+    "*/venv/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
