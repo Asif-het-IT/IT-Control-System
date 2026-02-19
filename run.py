@@ -5,6 +5,7 @@ HET IT Control System - Main Entry Point
 import sys
 import argparse
 from pathlib import Path
+import uvicorn
 
 # Add app to path
 app_dir = Path(__file__).parent / "app"
@@ -14,9 +15,8 @@ from app.config.settings import get_config
 from app.infrastructure.logger import setup_logging
 from app.infrastructure.database import get_db_manager
 from app.infrastructure.scheduler import get_scheduler
-from app.api.main import app as fastapi_app
+from app.services.email_service import get_email_service
 from app.ui.main_window import main as gui_main
-import uvicorn
 
 
 def setup_application():
@@ -78,12 +78,38 @@ def run_scheduler():
         scheduler.stop()
 
 
+def test_email():
+    """Test email configuration."""
+    print("Testing email configuration...")
+
+    email_service = get_email_service()
+
+    # Test connection
+    if email_service.test_connection():
+        print("✓ SMTP connection successful")
+
+        # Send test email
+        success = email_service.send_email(
+            subject="HET IT Control System - Email Test",
+            body="This is a test email from the HET IT Control System.\n\nIf you received this email, the email configuration is working correctly.",
+            recipients=email_service.config.recipients
+        )
+
+        if success:
+            print("✓ Test email sent successfully")
+        else:
+            print("✗ Failed to send test email")
+    else:
+        print("✗ SMTP connection failed")
+        print("Please check your email configuration in the .env file")
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="HET IT Control System")
     parser.add_argument(
         "mode",
-        choices=["api", "gui", "scheduler", "setup"],
+        choices=["api", "gui", "scheduler", "setup", "test-email"],
         help="Run mode"
     )
     parser.add_argument("--host", help="API host (for api mode)")
@@ -104,9 +130,10 @@ def main():
         run_scheduler()
     elif args.mode == "setup":
         print("Application setup completed successfully!")
-        print(f"Configuration loaded from: {get_config().config_dir}")
         print(f"Database initialized at: {get_config().database.url}")
         print(f"Logs directory: {get_config().paths.logs_dir}")
+    elif args.mode == "test-email":
+        test_email()
 
 
 if __name__ == "__main__":

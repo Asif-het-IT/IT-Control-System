@@ -6,8 +6,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.jobstores.memory import MemoryJobStore
-from apscheduler.executors.asyncio import AsyncIOExecutor
-from apscheduler.executors.threadpool import ThreadPoolExecutor
+from apscheduler.executors.pool import ThreadPoolExecutor
 from typing import Dict, Any, Optional, Callable
 import asyncio
 from datetime import datetime
@@ -39,8 +38,7 @@ class JobScheduler:
         }
 
         executors = {
-            'default': ThreadPoolExecutor(max_workers=10),
-            'async': AsyncIOExecutor()
+            'default': ThreadPoolExecutor(max_workers=10)
         }
 
         job_defaults = self.config.scheduler.job_defaults

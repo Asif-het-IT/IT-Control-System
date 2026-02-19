@@ -103,9 +103,16 @@ python run.py scheduler
 | `HET_APP_NAME` | Application name | HET IT Control System |
 | `HET_ENVIRONMENT` | Environment (development/production) | development |
 | `HET_DATABASE_URL` | Database connection URL | sqlite:///database/het_control.db |
-| `HET_SMTP_SERVER` | SMTP server | smtp.gmail.com |
+| `HET_SMTP_HOST` | SMTP server host | smtp.gmail.com |
+| `HET_SMTP_PORT` | SMTP server port | 587 |
 | `HET_SMTP_USERNAME` | SMTP username | - |
+| `HET_SMTP_PASSWORD` | SMTP password | - |
+| `HET_SMTP_TLS` | SMTP TLS enabled | true |
 | `HET_EMAIL_RECIPIENTS` | Email recipients (comma-separated) | - |
+| `HET_JWT_SECRET_KEY` | JWT secret key | change-this-in-production-secure-key |
+| `HET_JWT_ALGORITHM` | JWT algorithm | HS256 |
+| `HET_JWT_EXPIRATION_MINUTES` | JWT token expiration | 30 |
+| `HET_ALLOWED_ORIGINS` | CORS allowed origins | http://localhost:3000,http://localhost:8000 |
 | `HET_API_HOST` | API host | 0.0.0.0 |
 | `HET_API_PORT` | API port | 8000 |
 | `HET_NAS_BASE` | NAS base path | \\het-nas\Tally-Africa |
@@ -133,12 +140,50 @@ Branches are configured in `app/config/branches.json`:
 
 ## API Endpoints
 
-- `GET /health` - Health check
-- `GET /branches` - List branches
-- `GET /jobs` - List scheduled jobs
-- `POST /jobs/{job_id}/run` - Run job immediately
-- `GET /status` - System status
-- `GET /metrics` - System metrics
+### Authentication
+
+The API uses JWT (JSON Web Token) authentication. In development mode, authentication is bypassed for easier testing.
+
+**Login:**
+```
+POST /auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin123"
+}
+```
+
+**Response:**
+```json
+{
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "token_type": "bearer",
+  "expires_in": 1800
+}
+```
+
+**Using the token:**
+```
+Authorization: Bearer <access_token>
+```
+
+### Endpoints
+
+| Method | Endpoint | Auth Required | Description |
+|--------|----------|---------------|-------------|
+| `GET` | `/health` | No | Health check |
+| `POST` | `/auth/login` | No | User authentication |
+| `GET` | `/branches` | Yes | List branches |
+| `GET` | `/jobs` | Yes | List scheduled jobs |
+| `POST` | `/jobs/{job_id}/run` | Yes (Admin) | Run job immediately |
+| `GET` | `/status` | Yes | System status |
+| `GET` | `/metrics` | Yes | System metrics |
+
+### API Documentation
+
+When running the API server, visit `http://localhost:8000/docs` for interactive API documentation.
 
 ## Jobs
 

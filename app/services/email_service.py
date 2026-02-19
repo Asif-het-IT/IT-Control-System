@@ -23,6 +23,51 @@ class EmailService:
     def __init__(self):
         self.config = get_config().email
         self._server = None
+        self._validate_config()
+
+    def _validate_config(self):
+        """Validate email configuration on startup."""
+        required_fields = ['smtp_host', 'smtp_port', 'smtp_username', 'smtp_password']
+        missing_fields = []
+
+        for field in required_fields:
+            value = getattr(self.config, field)
+            if not value:
+                missing_fields.append(field)
+
+        if missing_fields:
+            logger.warning(f"Email configuration incomplete. Missing: {', '.join(missing_fields)}")
+            logger.warning("Email functionality will be disabled")
+        else:
+            logger.info("Email configuration validated successfully")
+
+    def test_connection(self) -> bool:
+        """
+        Test SMTP connection.
+
+        Returns:
+            True if connection successful, False otherwise
+        """
+        # Check if credentials are configured
+        if not self.config.smtp_username or not self.config.smtp_password:
+            logger.warning("Email credentials not configured")
+            return False
+            
+        try:
+            server = smtplib.SMTP(self.config.smtp_host, self.config.smtp_port, timeout=10)
+
+            if self.config.smtp_tls:
+                server.starttls()
+
+            server.login(self.config.smtp_username, self.config.smtp_password)
+            server.quit()
+
+            logger.info("SMTP connection test successful")
+            return True
+
+        except Exception as e:
+            logger.error(f"SMTP connection test failed: {e}")
+            return False
 
     def send_email(
         self,
@@ -45,7 +90,7 @@ class EmailService:
         Returns:
             True if sent successfully, False otherwise
         """
-        if not self.config.username or not self.config.password:
+        if not self.config.smtp_username or not self.config.smtp_password:
             logger.warning("Email not configured - skipping send")
             return False
 
@@ -59,7 +104,7 @@ class EmailService:
         try:
             # Create message
             msg = MIMEMultipart()
-            msg['From'] = self.config.username
+            msg['From'] = self.config.smtp_username
             msg['To'] = ', '.join(recipients)
             msg['Subject'] = subject
 
@@ -136,11 +181,12 @@ class EmailService:
     def _send_email(self, msg: MIMEMultipart, recipients: List[str]):
         """Send the email via SMTP."""
         try:
-            self._server = smtplib.SMTP(self.config.smtp_server, self.config.smtp_port)
-            self._server.starttls()
-            self._server.login(self.config.username, self.config.password)
+            self._server = smtplib.SMTP(self.config.smtp_host, self.config.smtp_port)
+            if self.config.smtp_tls:
+                self._server.starttls()
+            self._server.login(self.config.smtp_username, self.config.smtp_password)
             text = msg.as_string()
-            self._server.sendmail(self.config.username, recipients, text)
+            self._server.sendmail(self.config.smtp_username, recipients, text)
             self._server.quit()
         except Exception as e:
             raise e

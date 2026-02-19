@@ -2,7 +2,7 @@
 """
 FastAPI REST API for the HET IT Control System.
 """
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from app.infrastructure.scheduler import get_scheduler
 from app.infrastructure.database import get_db_manager, JobExecution
 from app.services.system_service import get_system_service
 from app.infrastructure.logger import get_logger
+from app.api.auth import get_current_user, get_current_admin_user, authenticate_user, create_access_token, LoginRequest, TokenResponse
 
 logger = get_logger("api")
 
@@ -25,9 +26,10 @@ app = FastAPI(
 )
 
 # CORS middleware
+config = get_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=config.api.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -60,6 +62,30 @@ class BranchInfo(BaseModel):
     last_check: Optional[datetime]
 
 # API routes
+@app.post("/auth/login", response_model=TokenResponse)
+async def login(request: LoginRequest):
+    """Authenticate user and return access token."""
+    user = authenticate_user(request.username, request.password)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Create access token
+    access_token = create_access_token({
+        "sub": user["username"],
+        "role": user["role"]
+    })
+
+    config = get_config()
+    return TokenResponse(
+        access_token=access_token,
+        expires_in=config.api.jwt_expiration_minutes * 60
+    )
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
@@ -88,7 +114,7 @@ async def health_check():
     )
 
 @app.get("/branches", response_model=List[BranchInfo])
-async def get_branches():
+async def get_branches(current_user = Depends(get_current_user)):
     """Get list of configured branches."""
     config = get_config()
     branches = []
@@ -104,7 +130,7 @@ async def get_branches():
     return branches
 
 @app.get("/jobs", response_model=List[JobStatusResponse])
-async def get_jobs():
+async def get_jobs(current_user = Depends(get_current_user)):
     """Get list of scheduled jobs."""
     scheduler = get_scheduler()
     jobs = []
@@ -120,7 +146,7 @@ async def get_jobs():
     return jobs
 
 @app.post("/jobs/{job_id}/run", response_model=JobResultResponse)
-async def run_job_now(job_id: str, background_tasks: BackgroundTasks):
+async def run_job_now(job_id: str, background_tasks: BackgroundTasks, current_user = Depends(get_current_admin_user)):
     """Run a job immediately."""
     scheduler = get_scheduler()
 
@@ -140,7 +166,7 @@ async def run_job_now(job_id: str, background_tasks: BackgroundTasks):
     )
 
 @app.get("/status")
-async def get_system_status():
+async def get_system_status(current_user = Depends(get_current_user)):
     """Get overall system status."""
     config = get_config()
     system_service = get_system_service()
@@ -160,7 +186,7 @@ async def get_system_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/metrics")
-async def get_metrics():
+async def get_metrics(current_user = Depends(get_current_user)):
     """Get system metrics."""
     try:
         db_manager = get_db_manager()

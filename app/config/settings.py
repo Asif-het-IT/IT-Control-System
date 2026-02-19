@@ -24,12 +24,12 @@ class DatabaseConfig:
 @dataclass
 class EmailConfig:
     """Email configuration."""
-    smtp_server: str = "smtp.gmail.com"
+    smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
-    username: Optional[str] = None
-    password: Optional[str] = None
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_tls: bool = True
     recipients: List[str] = field(default_factory=list)
-    use_tls: bool = True
 
 
 @dataclass
@@ -59,8 +59,10 @@ class APIConfig:
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
-    jwt_secret: str = "change-this-in-production"
-    jwt_expiration_hours: int = 24
+    jwt_secret_key: str = "change-this-in-production-secure-key"
+    jwt_algorithm: str = "HS256"
+    jwt_expiration_minutes: int = 30
+    allowed_origins: List[str] = field(default_factory=lambda: ["http://localhost:3000", "http://localhost:8000"])
 
 
 @dataclass
@@ -167,12 +169,12 @@ class ConfigLoader:
 
         # Email
         config['email'] = {
-            'smtp_server': os.getenv('HET_SMTP_SERVER', 'smtp.gmail.com'),
+            'smtp_host': os.getenv('HET_SMTP_HOST', 'smtp.gmail.com'),
             'smtp_port': int(os.getenv('HET_SMTP_PORT', '587')),
-            'username': os.getenv('HET_SMTP_USERNAME'),
-            'password': os.getenv('HET_SMTP_PASSWORD'),
+            'smtp_username': os.getenv('HET_SMTP_USERNAME'),
+            'smtp_password': os.getenv('HET_SMTP_PASSWORD'),
+            'smtp_tls': os.getenv('HET_SMTP_TLS', 'true').lower() == 'true',
             'recipients': os.getenv('HET_EMAIL_RECIPIENTS', '').split(',') if os.getenv('HET_EMAIL_RECIPIENTS') else [],
-            'use_tls': os.getenv('HET_SMTP_TLS', 'true').lower() == 'true'
         }
 
         # API
@@ -180,8 +182,10 @@ class ConfigLoader:
             'host': os.getenv('HET_API_HOST', '0.0.0.0'),
             'port': int(os.getenv('HET_API_PORT', '8000')),
             'debug': os.getenv('HET_API_DEBUG', 'false').lower() == 'true',
-            'jwt_secret': os.getenv('HET_JWT_SECRET', 'change-this-in-production'),
-            'jwt_expiration_hours': int(os.getenv('HET_JWT_EXPIRATION_HOURS', '24'))
+            'jwt_secret_key': os.getenv('HET_JWT_SECRET_KEY', 'change-this-in-production-secure-key'),
+            'jwt_algorithm': os.getenv('HET_JWT_ALGORITHM', 'HS256'),
+            'jwt_expiration_minutes': int(os.getenv('HET_JWT_EXPIRATION_MINUTES', '30')),
+            'allowed_origins': os.getenv('HET_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:8000').split(',')
         }
 
         # Logging
