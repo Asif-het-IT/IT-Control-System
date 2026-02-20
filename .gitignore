@@ -108,6 +108,7 @@ dmypy.json
 # Application specific
 logs/
 reports/
+database/
 __pycache__/
 *.pyc
 secrets.py

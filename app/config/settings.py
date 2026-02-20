@@ -12,6 +12,14 @@ from functools import lru_cache
 from app.infrastructure.exceptions import ConfigurationError
 
 
+def _require_env_var(var_name: str) -> str:
+    """Require an environment variable to be set."""
+    value = os.getenv(var_name)
+    if not value:
+        raise ConfigurationError(f"Required environment variable '{var_name}' is not set. Please set it in your .env file.")
+    return value
+
+
 @dataclass
 class DatabaseConfig:
     """Database configuration."""
@@ -182,7 +190,7 @@ class ConfigLoader:
             'host': os.getenv('HET_API_HOST', '0.0.0.0'),
             'port': int(os.getenv('HET_API_PORT', '8000')),
             'debug': os.getenv('HET_API_DEBUG', 'false').lower() == 'true',
-            'jwt_secret_key': os.getenv('HET_JWT_SECRET_KEY', 'change-this-in-production-secure-key'),
+            'jwt_secret_key': os.getenv('HET_JWT_SECRET_KEY') or _require_env_var('HET_JWT_SECRET_KEY'),
             'jwt_algorithm': os.getenv('HET_JWT_ALGORITHM', 'HS256'),
             'jwt_expiration_minutes': int(os.getenv('HET_JWT_EXPIRATION_MINUTES', '30')),
             'allowed_origins': os.getenv('HET_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:8000').split(',')

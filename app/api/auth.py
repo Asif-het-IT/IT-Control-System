@@ -2,6 +2,7 @@
 """
 JWT Authentication for the HET IT Control System API.
 """
+import os
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, Depends, status
@@ -190,7 +191,16 @@ def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
 
     # Simple authentication for demo - in production, use proper user store
     # TODO: Replace with proper user authentication system
-    if username == "admin" and password == "admin123":  # Change in production!
+    admin_username = os.getenv('HET_ADMIN_USERNAME', 'admin')
+    admin_password = os.getenv('HET_ADMIN_PASSWORD')
+    
+    if not admin_password:
+        raise HTTPException(
+            status_code=500,
+            detail="Admin authentication not configured. Set HET_ADMIN_PASSWORD environment variable."
+        )
+    
+    if username == admin_username and password == admin_password:
         return {
             "username": username,
             "role": "admin",
