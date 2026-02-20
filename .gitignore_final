@@ -1,0 +1,122 @@
+# HET IT Control System .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+*.exe
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Database
+database/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Credentials and secrets
+secrets/
+*.key
+*.pem
+*.crt
+config/secrets.py
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Build artifacts
+build/
+dist/
+*.msi
+*.dmg
+
+# Testing
+.coverage
+.pytest_cache/
+.tox/
+.cache
+
+# Documentation
+docs/_build/
+*.pdf
+
+# Backup files
+*.backup
+*.old
+
+# Windows specific
+desktop.ini
+$RECYCLE.BIN/
+
+# Network shares (if any)
+network_shares/
+
+# Job outputs
+reports/
+*.xlsx
+*.csv
+*.html
+
+# Email attachments
+attachments/
+
+# Speed test results
+speedtest_results/
+
+# NAS reports
+nas_reports/
+
+# Tally files
+tally_backups/</content>
+<parameter name="filePath">d:\My App\.gitignore_final
