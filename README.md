@@ -64,6 +64,11 @@ het-it-control-system/
    pip install -r requirements.txt
    ```
 
+   **Version Lock Information:**
+   - Python 3.11+ required
+   - All dependencies pinned to specific versions for stability
+   - Use virtual environment to avoid conflicts
+
 4. **Configure environment**
    ```bash
    cp .env.example .env
@@ -109,9 +114,11 @@ python run.py scheduler
 | `HET_SMTP_PASSWORD` | SMTP password | - |
 | `HET_SMTP_TLS` | SMTP TLS enabled | true |
 | `HET_EMAIL_RECIPIENTS` | Email recipients (comma-separated) | - |
-| `HET_JWT_SECRET_KEY` | JWT secret key | change-this-in-production-secure-key |
+| `HET_JWT_SECRET_KEY` | JWT secret key (**REQUIRED**) | - |
 | `HET_JWT_ALGORITHM` | JWT algorithm | HS256 |
 | `HET_JWT_EXPIRATION_MINUTES` | JWT token expiration | 30 |
+| `HET_ADMIN_USERNAME` | Admin username | admin |
+| `HET_ADMIN_PASSWORD` | Admin password (**REQUIRED**) | - |
 | `HET_ALLOWED_ORIGINS` | CORS allowed origins | http://localhost:3000,http://localhost:8000 |
 | `HET_API_HOST` | API host | 0.0.0.0 |
 | `HET_API_PORT` | API port | 8000 |
@@ -244,6 +251,51 @@ alembic revision --autogenerate -m "Add new table"
 # Run migration
 alembic upgrade head
 ```
+
+## Production Security Requirements
+
+### 🔐 Critical Security Configuration
+
+**Before deploying to production:**
+
+1. **Set Strong JWT Secret Key**
+   ```bash
+   # Generate a secure 256-bit key
+   openssl rand -hex 32
+   # Set HET_JWT_SECRET_KEY in .env
+   ```
+
+2. **Configure Admin Authentication**
+   ```bash
+   # Set strong admin password
+   HET_ADMIN_PASSWORD=your-secure-admin-password-here
+   ```
+
+3. **Restrict CORS Origins**
+   ```bash
+   # Only allow your domains
+   HET_ALLOWED_ORIGINS=https://yourdomain.com,https://admin.yourdomain.com
+   ```
+
+4. **HTTPS Required**
+   - Deploy behind reverse proxy (nginx/apache)
+   - Configure SSL/TLS certificates
+   - Redirect HTTP to HTTPS
+
+5. **Environment Variables**
+   - Never commit `.env` file
+   - Use strong, unique passwords
+   - Rotate secrets regularly
+
+### 🚨 Security Checklist
+
+- [ ] JWT secret key set (32+ characters)
+- [ ] Admin password configured
+- [ ] CORS origins restricted
+- [ ] HTTPS enabled
+- [ ] `.env` not committed
+- [ ] File permissions secure
+- [ ] Logs not exposing sensitive data
 
 ## Deployment
 
