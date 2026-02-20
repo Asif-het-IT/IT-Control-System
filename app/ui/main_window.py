@@ -1,370 +1,783 @@
 # app/ui/main_window.py
 """
-Main GUI window for the HET IT Control System.
+HET IT Control System - Enterprise Dashboard (PRO)
+✅ Jobs panel: auto-discover + run + schedule (calendar/time easy)
+✅ System dashboard (basic summary)
+✅ Activity logs
+✅ Job history (SQLite) table-like viewer
+✅ Status badges + Last Run + Next Run + Duration
+✅ Branch dropdown per job
 """
+from __future__ import annotations
 import sys
-import threading
-from queue import Queue
-from typing import Dict, Any, List, Optional
-from datetime import datetime
-
+import time
+import inspect
+import importlib
+import traceback
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Any, List, Dict, Tuple
+from PySide6.QtCore import Qt, Signal, QObject, QRunnable, QThreadPool, QTimer, QDateTime
+from PySide6.QtGui import QFont, QPalette, QColor
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QLabel, QPushButton, QTextEdit, QTabWidget,
-    QTableWidget, QTableWidgetItem, QProgressBar, QSplitter,
-    QGroupBox, QScrollArea, QFrame, QMessageBox, QComboBox
+    QApplication, QMainWindow, QWidget,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QSplitter, QFrame, QScrollArea, QMessageBox,
+    QComboBox, QLineEdit, QDateTimeEdit, QTabWidget
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject
-from PySide6.QtGui import QFont, QPalette, QColor, QIcon
-
-from app.config.settings import get_config
+# ------------------ ROOT PATH ------------------
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+JOBS_DIR = PROJECT_ROOT / "app" / "jobs"
+# ------------------ DB + Scheduler ------------------
+from app.infrastructure.job_history_db import log_job, get_last_run, get_history, init_db
 from app.infrastructure.scheduler import get_scheduler
-from app.infrastructure.database import get_db_manager, JobExecution
-from app.services.system_service import get_system_service
-from app.infrastructure.logger import get_logger
-
-logger = get_logger("ui")
-
-
-class JobCard(QFrame):
-    """Card widget for displaying job information."""
-
-    def __init__(self, job_id: str, job_info: Dict[str, Any], parent=None):
-        super().__init__(parent)
-        self.job_id = job_id
-        self.job_info = job_info
-
-        self.setFrameStyle(QFrame.Box)
-        self.setLineWidth(1)
-
-        layout = QVBoxLayout(self)
-
-        # Job name
-        name_label = QLabel(job_info.get('name', job_id))
-        name_label.setFont(QFont("Arial", 12, QFont.Bold))
-        layout.addWidget(name_label)
-
-        # Next run time
-        next_run = job_info.get('next_run_time')
-        if next_run:
-            time_label = QLabel(f"Next: {next_run.strftime('%H:%M:%S')}")
-        else:
-            time_label = QLabel("Not scheduled")
-        time_label.setStyleSheet("color: #666;")
-        layout.addWidget(time_label)
-
-        # Run button
-        self.run_button = QPushButton("Run Now")
-        self.run_button.clicked.connect(self.run_job)
-        layout.addWidget(self.run_button)
-
-        # Progress bar (hidden by default)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
-
-        self.setStyleSheet("""
-            JobCard {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 8px;
-                padding: 10px;
-                margin: 5px;
-            }
-            JobCard:hover {
-                background-color: #e9ecef;
-            }
-        """)
-
-    def run_job(self):
-        """Run the job."""
-        self.run_button.setEnabled(False)
-        self.run_button.setText("Running...")
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # Indeterminate progress
-
-        # Emit signal to parent
-        self.parent().run_job_signal.emit(self.job_id)
-
-    def reset_ui(self):
-        """Reset UI after job completion."""
-        self.run_button.setEnabled(True)
-        self.run_button.setText("Run Now")
-        self.progress_bar.setVisible(False)
-
-
-class MainWindow(QMainWindow):
-    """Main application window."""
-
-    run_job_signal = Signal(str)
-
+from app.gui.monitoring_panel import MonitoringPanel
+from app.infrastructure.monitoring import start_system_monitoring, record_scheduler_heartbeat, get_system_health, start_job_monitoring, update_job_status
+# optional system info
+try:
+    import psutil
+except Exception:
+    psutil = None
+# ------------------ UI BUS ------------------
+class UiBus(QObject):
+    log = Signal(str, str)  # msg, level
+    job_done = Signal(str, bool, str, float, str)  # job_id, success, msg, dur, branch
+UIBUS = UiBus()
+@dataclass
+class JobSpec:
+    job_id: str
+    title: str
+    module_name: str
+    entry_name: str
+    entry_type: str  # "function" | "class"
+    error: Optional[str] = None
+    exception: Optional[str] = None
+# ------------------ DISCOVERY ------------------
+SKIP_MODULES = {"__init__", "email_job"}  # helper modules not shown as runnable jobs
+FUNC_PRIORITY = ["run_job", "main"]
+FUNC_PREFIXES = ("run_", "generate_", "restart_", "check_", "sync_")  # exclude send_ to avoid email helpers
+EXCLUDE_PREFIXES = ("send_", "get_", "set_", "is_", "has_", "validate_", "test_")  # functions to exclude
+def _is_runnable_function(func) -> bool:
+    """Check if a function can be called without required arguments."""
+    try:
+        sig = inspect.signature(func)
+        # Must have no required parameters (or only self for methods)
+        required_params = [
+            p for p in sig.parameters.values()
+            if p.default == inspect.Parameter.empty and p.name != 'self'
+        ]
+        return len(required_params) == 0
+    except Exception:
+        return False
+def _pick_entry(module) -> Optional[Tuple[str, str]]:
+    # priority funcs
+    for nm in FUNC_PRIORITY:
+        if hasattr(module, nm) and callable(getattr(module, nm)):
+            func = getattr(module, nm)
+            if _is_runnable_function(func):
+                return nm, "function"
+    # prefixed functions (safe list, exclude dangerous ones)
+    for nm in dir(module):
+        if nm.startswith(FUNC_PREFIXES) and not nm.startswith(EXCLUDE_PREFIXES):
+            obj = getattr(module, nm)
+            if callable(obj) and _is_runnable_function(obj):
+                return nm, "function"
+    # classes with execute() / run() - but NOT abstract
+    for nm in dir(module):
+        obj = getattr(module, nm)
+        if inspect.isclass(obj) and obj.__module__ == module.__name__:
+            # Skip abstract classes
+            if inspect.isabstract(obj):
+                continue
+            # Check if it has execute() or run()
+            if hasattr(obj, "execute") and callable(getattr(obj, "execute")):
+                return nm, "class"
+            if hasattr(obj, "run") and callable(getattr(obj, "run")):
+                return nm, "class"
+    return None
+def discover_jobs() -> List[JobSpec]:
+    specs: List[JobSpec] = []
+    if not JOBS_DIR.exists():
+        return specs
+    for py in sorted(JOBS_DIR.glob("*.py")):
+        if py.name.startswith("__"):
+            continue
+        if py.stem in SKIP_MODULES:
+            continue
+        module_name = f"app.jobs.{py.stem}"
+        job_id = py.stem
+        try:
+            module = importlib.import_module(module_name)
+            picked = _pick_entry(module)
+            if not picked:
+                specs.append(JobSpec(
+                    job_id=job_id,
+                    title=job_id.replace("_", " ").title(),
+                    module_name=module_name,
+                    entry_name="",
+                    entry_type="",
+                    error="No runnable entry found (run_job/main/run_* or runnable class missing)"
+                ))
+                continue
+            entry_name, entry_type = picked
+            doc = getattr(module, "__doc__", None)
+            title = doc.splitlines()[0].strip() if doc else job_id.replace("_", " ").title()
+            specs.append(JobSpec(
+                job_id=job_id,
+                title=title,
+                module_name=module_name,
+                entry_name=entry_name,
+                entry_type=entry_type
+            ))
+        except Exception as e:
+            specs.append(JobSpec(
+                job_id=job_id,
+                title=job_id.replace("_", " ").title(),
+                module_name=module_name,
+                entry_name="",
+                entry_type="",
+                error=str(e),
+                exception=traceback.format_exc()
+            ))
+    return specs
+# ------------------ WORKER ------------------
+class JobRunner(QRunnable):
+    def __init__(self, spec: JobSpec, branch: str):
+        super().__init__()
+        self.spec = spec
+        self.branch = branch
+    def run(self):
+        start = time.time()
+        # Start job monitoring
+        start_job_monitoring(self.spec.job_id, self.branch)
+        UIBUS.log.emit(f"Starting job: {self.spec.job_id} | Branch={self.branch}", "INFO")
+        success = False
+        message = ""
+        duration = 0.0
+        try:
+            module = importlib.import_module(self.spec.module_name)
+            if self.spec.entry_type == "function":
+                fn = getattr(module, self.spec.entry_name)
+                result = fn()
+                success = True
+                message = str(result) if result is not None else "Completed"
+            elif self.spec.entry_type == "class":
+                cls = getattr(module, self.spec.entry_name)
+                # Try different instantiation strategies
+                instance = None
+                try:
+                    # Try no-arg constructor first (legacy compatibility)
+                    instance = cls()
+                except TypeError:
+                    try:
+                        # Try BaseJob-style constructor
+                        instance = cls(self.spec.job_id, {"branch": self.branch}, self.branch)
+                    except TypeError:
+                        # Try single arg constructor
+                        instance = cls(self.spec.job_id)
+                if instance is None:
+                    raise RuntimeError(f"Cannot instantiate {cls.__name__}")
+                # Call the execution method
+                if hasattr(instance, "execute") and callable(instance.execute):
+                    result = instance.execute()
+                elif hasattr(instance, "run") and callable(instance.run):
+                    result = instance.run()
+                else:
+                    raise RuntimeError("Class has no execute() or run() method")
+                # Handle different result types
+                if hasattr(result, "success"):
+                    # JobResult-like object
+                    success = result.success
+                    message = result.message or ("Success" if success else "Failed")
+                    if hasattr(result, "error") and result.error:
+                        message += f" | Error: {result.error}"
+                else:
+                    # Raw result - assume success
+                    success = True
+                    message = str(result) if result is not None else "Completed"
+            duration = time.time() - start
+            # Update job monitoring
+            update_job_status(self.spec.job_id, "completed", duration=duration)
+            # Log to database
+            log_job(
+                job_id=self.spec.job_id,
+                status="SUCCESS" if success else "FAILED",
+                message=message,
+                duration=duration,
+                branch=self.branch
+            )
+            UIBUS.log.emit(f"Job {self.spec.job_id} completed: {message} ({duration:.2f}s)", "INFO" if success else "ERROR")
+        except Exception as e:
+            duration = time.time() - start
+            success = False
+            message = f"Exception: {str(e)}"
+            # Update job monitoring
+            update_job_status(self.spec.job_id, "failed", error_message=message, duration=duration)
+            # Log failure to database
+            log_job(
+                job_id=self.spec.job_id,
+                status="FAILED",
+                message=message,
+                duration=duration,
+                branch=self.branch
+            )
+            UIBUS.log.emit(f"Job {self.spec.job_id} failed: {message}", "ERROR")
+        # Emit completion signal
+        UIBUS.job_done.emit(self.spec.job_id, success, message, duration, self.branch)
+# ------------------ UI HELPERS ------------------
+def _color(level: str) -> str:
+    return {
+        "INFO": "#9cdcfe",
+        "SUCCESS": "#00cc44",
+        "ERROR": "#ff6b6b",
+        "WARN": "#ffd866",
+    }.get(level, "#ddd")
+def _badge_color(status: str) -> str:
+    s = (status or "").upper()
+    if s in ("SUCCESS", "OK"):
+        return "#00cc44"
+    if s in ("FAILED", "ERROR"):
+        return "#ff6b6b"
+    if s == "RUNNING":
+        return "#ffd866"
+    return "#9cdcfe"
+# ------------------ WIDGETS ------------------
+class LogPanel(QFrame):
     def __init__(self):
         super().__init__()
-        self.config = get_config()
+        self.setStyleSheet("""
+            QFrame { background:#1e1e1e; border:1px solid #3e3e42; border-radius:12px; }
+            QLabel { color:white; }
+            QPushButton {
+                background-color:#0078d4; color:white; border-radius:6px; padding:6px 10px;
+            }
+            QPushButton:hover { background-color:#1391ff; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        header = QHBoxLayout()
+        title = QLabel("Activity Logs")
+        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        header.addWidget(title)
+        header.addStretch()
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setFixedWidth(80)
+        self.clear_btn.clicked.connect(self.clear)
+        header.addWidget(self.clear_btn)
+        layout.addLayout(header)
+        from PySide6.QtWidgets import QTextEdit
+        self.box = QTextEdit()
+        self.box.setReadOnly(True)
+        self.box.setStyleSheet("background:#111; color:#ddd; border:1px solid #333;")
+        layout.addWidget(self.box)
+    def clear(self):
+        self.box.clear()
+    def add(self, msg: str, level: str = "INFO"):
+        self.box.append(f'<span style="color:{_color(level)}">[{level}] {msg}</span>')
+class HistoryPanel(QFrame):
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("""
+            QFrame { background:#1e1e1e; border:1px solid #3e3e42; border-radius:12px; }
+            QLabel { color:white; }
+            QComboBox {
+                background:#1e1e1e; border:1px solid #3e3e42; border-radius:6px; padding:6px; color:#ddd;
+            }
+            QPushButton {
+                background-color:#0078d4; color:white; border-radius:6px; padding:6px 10px;
+            }
+            QPushButton:hover { background-color:#1391ff; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        top = QHBoxLayout()
+        title = QLabel("Job Execution History")
+        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        top.addWidget(title)
+        top.addStretch()
+        self.filter = QComboBox()
+        self.filter.addItem("All Jobs")
+        top.addWidget(self.filter)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh)
+        top.addWidget(self.refresh_btn)
+        layout.addLayout(top)
+        from PySide6.QtWidgets import QTextEdit
+        self.box = QTextEdit()
+        self.box.setReadOnly(True)
+        self.box.setStyleSheet("background:#111; color:#ddd; border:1px solid #333;")
+        layout.addWidget(self.box)
+    def set_jobs(self, job_ids: List[str]):
+        current = self.filter.currentText()
+        self.filter.clear()
+        self.filter.addItem("All Jobs")
+        for j in job_ids:
+            self.filter.addItem(j)
+        if current in job_ids:
+            self.filter.setCurrentText(current)
+    def refresh(self):
+        self.box.clear()
+        selected = self.filter.currentText()
+        job_id = None if selected == "All Jobs" else selected
+        rows = get_history(job_id=job_id, limit=80)
+        if not rows:
+            self.box.append("No history yet.")
+            return
+        for created_at, jid, branch, dur, status, msg in rows:
+            color = _badge_color(status)
+            self.box.append(
+                f'<span style="color:{color}; font-weight:bold;">{status}</span> '
+                f'<span style="color:#9cdcfe;">{created_at}</span> '
+                f'<span style="color:#c8c8c8;">[{jid}]</span> '
+                f'<span style="color:#ffd866;">({branch})</span> '
+                f'<span style="color:#ddd;">dur={dur}s</span><br/>'
+                f'<span style="color:#888;">{msg}</span><br/><br/>'
+            )
+class JobCard(QFrame):
+    def __init__(self, spec: JobSpec, on_run, on_schedule, on_unschedule, scheduler, parent=None):
+        super().__init__(parent)
+        self.spec = spec
+        self.on_run = on_run
+        self.on_schedule = on_schedule
+        self.on_unschedule = on_unschedule
+        self.scheduler = scheduler
+        self.setStyleSheet("""
+            QFrame { background:#2d2d30; border:1px solid #3e3e42; border-radius:12px; }
+            QLabel { color:white; }
+            QComboBox, QLineEdit, QDateTimeEdit {
+                background:#1e1e1e; border:1px solid #3e3e42; border-radius:6px; padding:6px; color:#ddd;
+            }
+            QPushButton {
+                background-color:#0078d4; color:white; border-radius:6px; padding:6px 10px;
+            }
+            QPushButton:hover { background-color:#1391ff; }
+            QPushButton:disabled { background:#444; color:#aaa; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        # title row
+        top = QHBoxLayout()
+        self.title = QLabel(spec.title)
+        self.title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        top.addWidget(self.title)
+        top.addStretch()
+        self.badge = QLabel("READY")
+        self.badge.setStyleSheet(f"color:{_badge_color('READY')}; font-weight:bold;")
+        top.addWidget(self.badge)
+        layout.addLayout(top)
+        self.meta = QLabel(f"Job ID: {spec.job_id}")
+        self.meta.setStyleSheet("color:#c8c8c8; font-size:11px;")
+        layout.addWidget(self.meta)
+        self.last_run = QLabel("Last Run: — | Duration: — | Branch: —")
+        self.last_run.setStyleSheet("color:#9cdcfe; font-size:11px;")
+        layout.addWidget(self.last_run)
+        self.next_run = QLabel("Next Run: —")
+        self.next_run.setStyleSheet("color:#c8c8c8; font-size:11px;")
+        layout.addWidget(self.next_run)
+        # branch + mode
+        row1 = QHBoxLayout()
+        self.branch_box = QComboBox()
+        self.branch_box.addItems(["default", "Kano", "Abuja", "Lagos", "BUK", "DXB"])
+        row1.addWidget(self.branch_box, 2)
+        self.mode = QComboBox()
+        self.mode.addItems(["Run Once", "Daily", "Weekly", "Cron"])
+        self.mode.currentTextChanged.connect(self._mode_changed)
+        row1.addWidget(self.mode, 2)
+        layout.addLayout(row1)
+        # schedule controls (dynamic)
+        self.run_once_dt = QDateTimeEdit()
+        self.run_once_dt.setCalendarPopup(True)
+        self.run_once_dt.setDateTime(QDateTime.currentDateTime().addSecs(300))  # +5 min
+        self.daily_time = QLineEdit()
+        self.daily_time.setPlaceholderText("HH:MM  (e.g. 09:00)")
+        self.daily_time.setText("09:00")
+        self.week_day = QComboBox()
+        self.week_day.addItems(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])
+        self.week_time = QLineEdit()
+        self.week_time.setPlaceholderText("HH:MM  (e.g. 11:10)")
+        self.week_time.setText("11:10")
+        self.cron = QLineEdit()
+        self.cron.setPlaceholderText("Cron: m h dom mon dow  (0 9 * * *)")
+        self.cron.setText("0 9 * * *")
+        self.ctrl_row = QHBoxLayout()
+        self.ctrl_row.addWidget(self.run_once_dt)
+        layout.addLayout(self.ctrl_row)
+        # buttons
+        btns = QHBoxLayout()
+        btns.addStretch()
+        self.run_btn = QPushButton("▶ Run")
+        self.run_btn.clicked.connect(self._run_clicked)
+        btns.addWidget(self.run_btn)
+        self.sch_btn = QPushButton("⏱ Schedule")
+        self.sch_btn.clicked.connect(self._schedule_clicked)
+        btns.addWidget(self.sch_btn)
+        self.uns_btn = QPushButton("✖ Remove")
+        self.uns_btn.clicked.connect(self._unschedule_clicked)
+        btns.addWidget(self.uns_btn)
+        layout.addLayout(btns)
+        if spec.error:
+            self.badge.setText("ERROR")
+            self.badge.setStyleSheet(f"color:{_badge_color('ERROR')}; font-weight:bold;")
+            self.run_btn.setEnabled(False)
+            self.sch_btn.setEnabled(False)
+            self.uns_btn.setEnabled(False)
+        self.refresh_last_next()
+    def selected_branch(self) -> str:
+        return self.branch_box.currentText().strip() or "default"
+    def refresh_last_next(self):
+        # last run
+        last = get_last_run(self.spec.job_id)
+        if last:
+            st, dur, ts, br = last
+            self.last_run.setText(f"Last Run: {ts} | Duration: {dur}s | Branch: {br}")
+            self.badge.setText(st.upper())
+            self.badge.setStyleSheet(f"color:{_badge_color(st)}; font-weight:bold;")
+        # next run
+        if hasattr(self, 'scheduler') and self.scheduler:
+            nxt = self.scheduler.get_next_run_time(self.spec.job_id)
+            self.next_run.setText(f"Next Run: {nxt}" if nxt else "Next Run: —")
+        else:
+            self.next_run.setText("Next Run: —")
+    def set_running(self):
+        self.run_btn.setEnabled(False)
+        self.badge.setText("RUNNING")
+        self.badge.setStyleSheet(f"color:{_badge_color('RUNNING')}; font-weight:bold;")
+    def set_done(self, success: bool):
+        self.run_btn.setEnabled(True)
+        self.refresh_last_next()
+        if success:
+            self.badge.setText("SUCCESS")
+            self.badge.setStyleSheet(f"color:{_badge_color('SUCCESS')}; font-weight:bold;")
+        else:
+            self.badge.setText("FAILED")
+            self.badge.setStyleSheet(f"color:{_badge_color('FAILED')}; font-weight:bold;")
+    def _mode_changed(self, mode: str):
+        # clear ctrl row
+        while self.ctrl_row.count():
+            item = self.ctrl_row.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        if mode == "Run Once":
+            self.ctrl_row.addWidget(self.run_once_dt)
+        elif mode == "Daily":
+            self.ctrl_row.addWidget(self.daily_time)
+        elif mode == "Weekly":
+            self.ctrl_row.addWidget(self.week_day)
+            self.ctrl_row.addWidget(self.week_time)
+        else:  # Cron
+            self.ctrl_row.addWidget(self.cron)
+    def _run_clicked(self):
+        self.set_running()
+        self.on_run(self.spec, self.selected_branch())
+    def _schedule_clicked(self):
+        branch = self.selected_branch()
+        mode = self.mode.currentText()
+        try:
+            if mode == "Run Once":
+                dt = self.run_once_dt.dateTime().toPython()
+                self.on_schedule(self.spec, branch, ("once", dt))
+            elif mode == "Daily":
+                hh, mm = self.daily_time.text().strip().split(":")
+                self.on_schedule(self.spec, branch, ("daily", int(hh), int(mm)))
+            elif mode == "Weekly":
+                dow = self.week_day.currentText().strip()
+                hh, mm = self.week_time.text().strip().split(":")
+                self.on_schedule(self.spec, branch, ("weekly", dow, int(hh), int(mm)))
+            else:  # Cron
+                expr = self.cron.text().strip()
+                self.on_schedule(self.spec, branch, ("cron", expr))
+        except Exception as e:
+            QMessageBox.warning(self, "Schedule Error", str(e))
+    def _unschedule_clicked(self):
+        self.on_unschedule(self.spec.job_id)
+        self.refresh_last_next()
+# ------------------ MAIN WINDOW ------------------
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        init_db()
+        # Get scheduler instance
         self.scheduler = get_scheduler()
-        self.system_service = get_system_service()
-
-        self.setWindowTitle("HET IT Control System")
-        self.setGeometry(100, 100, 1200, 800)
-
-        # Setup UI
-        self.setup_ui()
-        self.setup_connections()
-
-        # Update timer
-        self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.update_status)
-        self.update_timer.start(5000)  # Update every 5 seconds
-
-        # Initial update
-        self.update_status()
-
-    def setup_ui(self):
-        """Setup the user interface."""
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-
-        main_layout = QVBoxLayout(central_widget)
-
-        # Header
-        header = self.create_header()
-        main_layout.addWidget(header)
-
-        # Main content
-        content_splitter = QSplitter(Qt.Vertical)
-
-        # Jobs section
-        jobs_group = self.create_jobs_section()
-        content_splitter.addWidget(jobs_group)
-
-        # Status and logs section
-        bottom_splitter = QSplitter(Qt.Horizontal)
-
-        # System status
-        status_group = self.create_status_section()
-        bottom_splitter.addWidget(status_group)
-
-        # Logs
-        logs_group = self.create_logs_section()
-        bottom_splitter.addWidget(logs_group)
-
-        content_splitter.addWidget(bottom_splitter)
-        content_splitter.setSizes([400, 400])
-
-        main_layout.addWidget(content_splitter)
-
-    def create_header(self) -> QWidget:
-        """Create header widget."""
-        header = QWidget()
-        layout = QHBoxLayout(header)
-
-        title = QLabel("HET IT Control System")
-        title.setFont(QFont("Arial", 18, QFont.Bold))
-        layout.addWidget(title)
-
-        layout.addStretch()
-
-        # Branch selector (placeholder)
-        branch_label = QLabel("Branch:")
-        layout.addWidget(branch_label)
-
-        self.branch_combo = QComboBox()
-        self.branch_combo.addItems(["default"] + list(self.config.branches.keys()))
-        layout.addWidget(self.branch_combo)
-
+# Start system monitoring
+        start_system_monitoring()
+        self.setWindowTitle("HET Dashboard - Enterprise")
+        self.setGeometry(120, 80, 1600, 900)
+        self._apply_dark_theme()
+        self.threadpool = QThreadPool.globalInstance()
+        self.cards: Dict[str, JobCard] = {}
+        self.jobs: List[JobSpec] = []
+        central = QWidget()
+        self.setCentralWidget(central)
+        root_layout = QVBoxLayout(central)
+        root_layout.setContentsMargins(10, 10, 10, 10)
+        root_layout.setSpacing(10)
+        header = self._header()
+        root_layout.addWidget(header)
+        splitter = QSplitter(Qt.Horizontal)
+        # LEFT: Jobs
+        left = QFrame()
+        left.setStyleSheet("background:#1e1e1e; border:1px solid #3e3e42; border-radius:12px;")
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(10, 10, 10, 10)
+        left_title = QLabel("Scheduled Jobs")
+        left_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        left_title.setStyleSheet("color:white;")
+        left_layout.addWidget(left_title)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet("border:none; background:transparent;")
+        self.jobs_container = QWidget()
+        self.jobs_layout = QVBoxLayout(self.jobs_container)
+        self.jobs_layout.setContentsMargins(6, 6, 6, 6)
+        self.jobs_layout.setSpacing(10)
+        self.scroll.setWidget(self.jobs_container)
+        left_layout.addWidget(self.scroll)
+        # CENTER: Dashboard + History + Monitoring
+        center = QFrame()
+        center.setStyleSheet("background:#1e1e1e; border:1px solid #3e3e42; border-radius:12px;")
+        c = QVBoxLayout(center)
+        c.setContentsMargins(10, 10, 10, 10)
+        c.setSpacing(10)
+        # Create tab widget for different panels
+        self.center_tabs = QTabWidget()
+        self.center_tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #3e3e42;
+                background: #1e1e1e;
+                border-radius: 5px;
+            }
+            QTabBar::tab {
+                background: #2d2d30;
+                color: white;
+                padding: 8px 16px;
+                margin-right: 2px;
+                border: 1px solid #3e3e42;
+                border-bottom: none;
+                border-radius: 5px 5px 0 0;
+            }
+            QTabBar::tab:selected {
+                background: #1e1e1e;
+                border-bottom: 2px solid #007acc;
+            }
+            QTabBar::tab:hover {
+                background: #3e3e42;
+            }
+        """)
+        # Dashboard tab
+        dashboard_tab = QWidget()
+        dashboard_layout = QVBoxLayout(dashboard_tab)
+        dash_title = QLabel("System Dashboard")
+        dash_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        dash_title.setStyleSheet("color:white;")
+        dashboard_layout.addWidget(dash_title)
+        self.sys_info = QLabel("Loading system info...")
+        self.sys_info.setStyleSheet("color:#c8c8c8;")
+        dashboard_layout.addWidget(self.sys_info)
+        self.history = HistoryPanel()
+        dashboard_layout.addWidget(self.history, 1)
+        self.center_tabs.addTab(dashboard_tab, "Dashboard")
+        # Monitoring tab
+        self.monitoring_panel = MonitoringPanel()
+        self.center_tabs.addTab(self.monitoring_panel, "Monitoring")
+        c.addWidget(self.center_tabs)
+        # RIGHT: Logs
+        self.logs = LogPanel()
+        splitter.addWidget(left)
+        splitter.addWidget(center)
+        splitter.addWidget(self.logs)
+        splitter.setSizes([520, 650, 430])
+        root_layout.addWidget(splitter)
+        # Signals
+        UIBUS.log.connect(self.on_log)
+        UIBUS.job_done.connect(self.on_job_done)
+        # Load
+        self.reload_jobs()
+        self._refresh_system_info()
+        # timer refresh
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._periodic_refresh)
+        self.timer.start(5000)
+    def _apply_dark_theme(self):
+        pal = QPalette()
+        pal.setColor(QPalette.Window, QColor(30, 30, 30))
+        pal.setColor(QPalette.WindowText, QColor(255, 255, 255))
+        pal.setColor(QPalette.Base, QColor(45, 45, 48))
+        pal.setColor(QPalette.Text, QColor(255, 255, 255))
+        pal.setColor(QPalette.Button, QColor(45, 45, 48))
+        pal.setColor(QPalette.ButtonText, QColor(255, 255, 255))
+        self.setPalette(pal)
+    def _header(self) -> QFrame:
+        header = QFrame()
+        header.setStyleSheet("background:#2d2d30; border:1px solid #3e3e42; border-radius:12px;")
+        # Health indicator
+        self.health_indicator = QLabel("● HEALTHY")
+        self.health_indicator.setStyleSheet("color:#00cc44; font-size:12px; font-weight:bold;")
+        h.addWidget(self.health_indicator)
+        h = QHBoxLayout(header)
+        h.setContentsMargins(14, 10, 14, 10)
+        t = QLabel("HET IT Control System")
+        t.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        t.setStyleSheet("color:white;")
+        h.addWidget(t)
+        h.addStretch()
+        self.online = QLabel("● Online")
+        self.online.setStyleSheet("color:#00cc44; font-size:12px; font-weight:bold;")
+        h.addWidget(self.online)
         return header
 
-    def create_jobs_section(self) -> QGroupBox:
-        """Create jobs section."""
-        group = QGroupBox("Automated Jobs")
-        layout = QVBoxLayout(group)
+    def _refresh_system_info(self):
+        if psutil is None:
+            self.sys_info.setText(
+                f"Project Root: {PROJECT_ROOT}\nJobs Folder: {JOBS_DIR}\n\n"
+                "psutil not installed - system metrics limited."
+            )
+            return
 
-        # Jobs grid
-        self.jobs_scroll = QScrollArea()
-        self.jobs_widget = QWidget()
-        self.jobs_layout = QGridLayout(self.jobs_widget)
+        cpu = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory().percent
+        disk = psutil.disk_usage(str(PROJECT_ROOT)).percent
+        self.sys_info.setText(
+            f"Project Root: {PROJECT_ROOT}\nJobs Folder: {JOBS_DIR}\n\n"
+            f"CPU: {cpu}%   RAM: {mem}%   DISK: {disk}%\n"
+            "Tip: Schedule is simple: Run Once / Daily / Weekly (no cron needed)."
+        )
 
-        self.jobs_scroll.setWidget(self.jobs_widget)
-        self.jobs_scroll.setWidgetResizable(True)
-        layout.addWidget(self.jobs_scroll)
+def _periodic_refresh(self):
+    # Record scheduler heartbeat
+    record_scheduler_heartbeat()
 
-        return group
+    # Update health indicator
+    health = get_system_health()
+    health_colors = {
+        "healthy": "#00cc44",
+        "warning": "#ff9800",
+        "critical": "#ff4444",
+        "unknown": "#9e9e9e"
+    }
+    color = health_colors.get(health.overall_status, "#9e9e9e")
+    self.health_indicator.setStyleSheet(f"color:{color}; font-size:12px; font-weight:bold;")
+    self.health_indicator.setText(f"● {health.overall_status.upper()}")
 
-    def create_status_section(self) -> QGroupBox:
-        """Create system status section."""
-        group = QGroupBox("System Status")
-        layout = QVBoxLayout(group)
+    # Set tooltip with issues
+    if health.issues:
+        tooltip = f"System Status: {health.overall_status.title()}\n\nIssues:\n" + "\n".join(f"• {issue}" for issue in health.issues[:3])
+        self.health_indicator.setToolTip(tooltip)
+    else:
+        self.health_indicator.setToolTip(f"System Status: {health.overall_status.title()}")
 
-        # System info
-        self.system_info_text = QTextEdit()
-        self.system_info_text.setMaximumHeight(200)
-        self.system_info_text.setReadOnly(True)
-        layout.addWidget(self.system_info_text)
+    # refresh system + history + nextrun on cards
+    self._refresh_system_info()
+    self.history.refresh()
+    for card in self.cards.values():
+        card.refresh_last_next()
 
-        # Recent executions table
-        executions_label = QLabel("Recent Job Executions")
-        executions_label.setFont(QFont("Arial", 12, QFont.Bold))
-        layout.addWidget(executions_label)
+def on_log(self, msg: str, level: str):
+    self.logs.add(msg, level)
 
-        self.executions_table = QTableWidget()
-        self.executions_table.setColumnCount(4)
-        self.executions_table.setHorizontalHeaderLabels(["Job", "Branch", "Status", "Time"])
-        self.executions_table.setMaximumHeight(200)
-        layout.addWidget(self.executions_table)
+def on_job_done(self, job_id: str, success: bool, message: str, duration: float, branch: str):
+    card = self.cards.get(job_id)
+    if card:
+        card.set_done(success)
 
-        return group
+    if success:
+        self.logs.add(f"{job_id} SUCCESS | {duration}s | {branch} | {message}", "SUCCESS")
+    else:
+        self.logs.add(f"{job_id} FAILED | {duration}s | {branch} | {message}", "ERROR")
+        QMessageBox.warning(self, "Job Failed", f"{job_id} failed:\n{message}")
 
-    def create_logs_section(self) -> QGroupBox:
-        """Create logs section."""
-        group = QGroupBox("Activity Logs")
-        layout = QVBoxLayout(group)
+    self.history.refresh()
 
-        self.logs_text = QTextEdit()
-        self.logs_text.setReadOnly(True)
-        layout.addWidget(self.logs_text)
+def clear_job_cards(self):
+    for i in reversed(range(self.jobs_layout.count())):
+        item = self.jobs_layout.itemAt(i)
+        w = item.widget()
+        if w:
+            w.setParent(None)
 
-        # Clear logs button
-        clear_button = QPushButton("Clear Logs")
-        clear_button.clicked.connect(self.clear_logs)
-        layout.addWidget(clear_button)
+def reload_jobs(self):
+    self.clear_job_cards()
+    self.cards.clear()
 
-        return group
+    self.jobs = discover_jobs()
+    ids = [j.job_id for j in self.jobs]
+    self.history.set_jobs(ids)
 
-    def setup_connections(self):
-        """Setup signal connections."""
-        self.run_job_signal.connect(self.handle_run_job)
+    if not self.jobs:
+        lbl = QLabel("No jobs found in app/jobs")
+        lbl.setStyleSheet("color:#ff6b6b;")
+        self.jobs_layout.addWidget(lbl)
+        self.jobs_layout.addStretch()
+        return
 
-    def update_status(self):
-        """Update system status display."""
-        try:
-            # Update system info
-            system_info = self.system_service.get_system_info()
-            health = self.system_service.get_system_health()
+    for spec in self.jobs:
+        card = JobCard(spec, self.run_job, self.schedule_job_ui, self.unschedule_job_ui, self.scheduler, parent=self)
+        self.cards[spec.job_id] = card
+        self.jobs_layout.addWidget(card)
 
-            status_text = f"""
-System Information:
-Platform: {system_info.get('platform', 'Unknown')}
-CPU Cores: {self.system_service.get_cpu_info().get('total_cores', 'Unknown')}
-Memory: {self.system_service.get_memory_info().get('percent', 0):.1f}% used
-System Health: {health.get('overall_health', 0):.1f}%
+        if spec.error:
+            self.logs.add(f"{spec.job_id} discovery error: {spec.error}", "ERROR")
+            if spec.exception:
+                self.logs.add(spec.exception, "ERROR")
 
-Last Updated: {datetime.now().strftime('%H:%M:%S')}
-            """.strip()
+    self.jobs_layout.addStretch()
+    self.logs.add(f"Jobs loaded: {len(self.jobs)}", "INFO")
+    self.history.refresh()
 
-            self.system_info_text.setPlainText(status_text)
+def run_job(self, spec: JobSpec, branch: str):
+    if spec.error:
+        self.logs.add(f"Cannot run {spec.job_id}: {spec.error}", "ERROR")
+        return
+    worker = JobRunner(spec, branch)
+    self.threadpool.start(worker)
 
-            # Update jobs
-            self.update_jobs_display()
+def schedule_job_ui(self, spec: JobSpec, branch: str, payload: tuple):
+    # scheduler will call a wrapper that runs job in background safely
+    def scheduled_call():
+        worker = JobRunner(spec, branch)
+        self.threadpool.start(worker)
 
-            # Update recent executions
-            self.update_executions_table()
+    kind = payload[0]
+    if kind == "once":
+        dt = payload[1]
+        self.scheduler.schedule_job(spec.job_id, scheduled_call, "once", {"datetime": dt}, branch)
+        self.logs.add(f"Scheduled (Run Once): {spec.job_id} @ {dt} | {branch}", "INFO")
 
-        except Exception as e:
-            logger.error(f"Failed to update status: {e}")
+    elif kind == "daily":
+        hour, minute = payload[1], payload[2]
+        self.scheduler.schedule_job(spec.job_id, scheduled_call, "daily", {"hour": hour, "minute": minute}, branch)
+        self.logs.add(f"Scheduled (Daily): {spec.job_id} @ {hour:02d}:{minute:02d} | {branch}", "INFO")
 
-    def update_jobs_display(self):
-        """Update jobs display."""
-        # Clear existing job cards
-        for i in reversed(range(self.jobs_layout.count())):
-            widget = self.jobs_layout.itemAt(i).widget()
-            if widget:
-                widget.setParent(None)
+    elif kind == "weekly":
+        dow, hour, minute = payload[1], payload[2], payload[3]
+        self.scheduler.schedule_job(spec.job_id, scheduled_call, "weekly",
+                                  {"day_of_week": dow, "hour": hour, "minute": minute}, branch)
+        self.logs.add(f"Scheduled (Weekly): {spec.job_id} {dow} @ {hour:02d}:{minute:02d} | {branch}", "INFO")
 
-        # Add job cards
-        jobs = self.scheduler.list_jobs()
-        row, col = 0, 0
-        max_cols = 3
+    elif kind == "cron":
+        expr = payload[1]
+        self.scheduler.schedule_job(spec.job_id, scheduled_call, "cron", {"cron_expression": expr}, branch)
+        self.logs.add(f"Scheduled (Cron): {spec.job_id} -> {expr} | {branch}", "INFO")
 
-        for job_id, job_info in jobs.items():
-            card = JobCard(job_id, job_info, self)
-            self.jobs_layout.addWidget(card, row, col)
+    # update UI
+    card = self.cards.get(spec.job_id)
+    if card:
+        card.refresh_last_next()
+    self.history.refresh()
 
-            col += 1
-            if col >= max_cols:
-                col = 0
-                row += 1
-
-    def update_executions_table(self):
-        """Update recent executions table."""
-        try:
-            db_manager = get_db_manager()
-            with db_manager.get_session() as session:
-                executions = session.query(JobExecution).order_by(
-                    JobExecution.created_at.desc()
-                ).limit(10).all()
-
-                self.executions_table.setRowCount(len(executions))
-
-                for row, exec in enumerate(executions):
-                    self.executions_table.setItem(row, 0, QTableWidgetItem(exec.job_name))
-                    self.executions_table.setItem(row, 1, QTableWidgetItem(exec.branch_id))
-                    status = "Success" if exec.success else "Failed"
-                    self.executions_table.setItem(row, 2, QTableWidgetItem(status))
-                    time_str = exec.created_at.strftime("%H:%M:%S")
-                    self.executions_table.setItem(row, 3, QTableWidgetItem(time_str))
-
-        except Exception as e:
-            logger.error(f"Failed to update executions table: {e}")
-
-    def handle_run_job(self, job_id: str):
-        """Handle job run request."""
-        def run_job_thread():
-            try:
-                result = self.scheduler.run_job_now(job_id)
-
-                # Update UI in main thread
-                self.update_status()
-
-                # Show result message
-                if result and result.success:
-                    QMessageBox.information(self, "Success", f"Job {job_id} completed successfully")
-                else:
-                    error_msg = result.error if result else "Unknown error"
-                    QMessageBox.warning(self, "Job Failed", f"Job {job_id} failed: {error_msg}")
-
-            except Exception as e:
-                logger.error(f"Failed to run job {job_id}: {e}")
-                QMessageBox.critical(self, "Error", f"Failed to run job {job_id}: {str(e)}")
-
-        # Run in background thread
-        thread = threading.Thread(target=run_job_thread, daemon=True)
-        thread.start()
-
-    def clear_logs(self):
-        """Clear logs display."""
-        self.logs_text.clear()
-
-    def closeEvent(self, event):
-        """Handle application close."""
-        self.update_timer.stop()
-        event.accept()
+def unschedule_job_ui(self, job_id: str):
+    self.scheduler.unschedule_job(job_id)
+    self.logs.add(f"Schedule removed: {job_id}", "WARN")
 
 
 def main():
-    """Main application entry point."""
     app = QApplication(sys.argv)
-
-    # Set dark theme
-    app.setStyle("Fusion")
-    palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(53, 53, 53))
-    palette.setColor(QPalette.WindowText, Qt.white)
-    palette.setColor(QPalette.Base, QColor(25, 25, 25))
-    palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-    palette.setColor(QPalette.ToolTipBase, Qt.white)
-    palette.setColor(QPalette.ToolTipText, Qt.white)
-    palette.setColor(QPalette.Text, Qt.white)
-    palette.setColor(QPalette.Button, QColor(53, 53, 53))
-    palette.setColor(QPalette.ButtonText, Qt.white)
-    palette.setColor(QPalette.BrightText, Qt.red)
-    palette.setColor(QPalette.Link, QColor(42, 130, 218))
-    palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-    palette.setColor(QPalette.HighlightedText, Qt.black)
-    app.setPalette(palette)
-
-    window = MainWindow()
-    window.show()
-
+    w = MainWindow()
+    w.show()
     sys.exit(app.exec())
 
 

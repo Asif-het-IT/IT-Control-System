@@ -1,7 +1,7 @@
-# scripts/build_final.py
+# scripts/build_exe.py
 """
-Final build script for HET IT Control System.
-Creates production-ready executable.
+Build script for creating HET IT Control System executable.
+Uses PyInstaller to create a single EXE file.
 """
 
 import subprocess
@@ -40,18 +40,18 @@ def build_executable():
         return False
 
     # Check if spec file exists
-    spec_file = project_root / "build_exe_final.spec"
+    spec_file = project_root / "build_exe.spec"
     if not spec_file.exists():
         logger.error(f"Spec file not found: {spec_file}")
         return False
 
-    # Clean previous build (skip for now due to file locks)
+    # Clean previous build
     dist_dir = project_root / "dist"
     build_dir = project_root / "build"
 
-    # if dist_dir.exists():
-    #     logger.info("Cleaning previous dist directory")
-    #     shutil.rmtree(dist_dir)
+    if dist_dir.exists():
+        logger.info("Cleaning previous dist directory")
+        shutil.rmtree(dist_dir)
 
     if build_dir.exists():
         logger.info("Cleaning previous build directory")
@@ -78,7 +78,7 @@ def build_executable():
         return False
 
 def create_installer():
-    """Create installer batch file."""
+    """Create a simple installer script."""
     project_root = Path(__file__).parent.parent
     dist_dir = project_root / "dist"
     exe_path = dist_dir / "HET-IT-Control-System.exe"
@@ -122,7 +122,7 @@ pause
 
 def main():
     """Main build process."""
-    logger.info("Starting HET IT Control System final build process")
+    logger.info("Starting HET IT Control System build process")
 
     # Build executable
     if not build_executable():
@@ -140,3 +140,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+<parameter name="filePath">d:\My App\scripts\build_exe.py

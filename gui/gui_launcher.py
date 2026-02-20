@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-(het) Automation Dashboard – Professional Version (ROMAN URDU)
+het Automation Dashboard – Professional Version (ROMAN URDU)
 Author: Asif Ali
 """
 
@@ -159,7 +159,7 @@ ctk.set_default_color_theme("green")
 class LaundryApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("(het) Automation")
+        self.title("het Automation")
         self.geometry("1000x720")
         self._setup_icon()
 
@@ -195,7 +195,7 @@ class LaundryApp(ctk.CTk):
 
         title = ctk.CTkLabel(
             top,
-            text="(het) Automations & Monitoring Dashboard",
+            text="het Automations & Monitoring Dashboard",
             font=ctk.CTkFont(size=20, weight="bold"),
             pady=12,
         )

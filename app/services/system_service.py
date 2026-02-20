@@ -55,7 +55,7 @@ class SystemService:
             return {
                 'physical_cores': psutil.cpu_count(logical=False),
                 'total_cores': psutil.cpu_count(logical=True),
-                'cpu_percent': psutil.cpu_percent(interval=1, percpu=True),
+                'cpu_percent': psutil.cpu_percent(interval=None, percpu=True),
                 'cpu_freq': psutil.cpu_freq()._asdict() if psutil.cpu_freq() else None,
                 'load_average': psutil.getloadavg() if hasattr(psutil, 'getloadavg') else None
             }

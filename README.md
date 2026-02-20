@@ -1,4 +1,261 @@
-# HET IT Control System
+# HET IT Control System - Professional Windows Software
+
+Enterprise Automation Dashboard with professional Windows deployment, monitoring, and alerting capabilities.
+
+## 🚀 Quick Start
+
+### For End Users
+
+1. **Download** the installer from the releases page
+2. **Run** `HET_IT_Control_System_Installer.exe` as administrator
+3. **Follow** the setup wizard to configure email and system settings
+4. **Launch** from Start Menu or Desktop shortcut
+
+### For Developers
+
+```bash
+# Clone repository
+git clone <repository-url>
+cd het-it-control-system
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run setup wizard
+python het_launcher.py setup
+
+# Launch application
+python het_launcher.py gui
+```
+
+## 📦 Distribution Options
+
+### 1. Windows Installer (Recommended)
+- Professional MSI/EXE installer
+- Automatic service installation
+- Start menu integration
+- Uninstaller support
+
+### 2. Portable Version
+- Single executable with embedded files
+- No installation required
+- Run from any location
+- Includes all batch files for easy launching
+
+### 3. Development Setup
+- Full source code
+- Development dependencies
+- Build tools included
+
+## 🏗️ Architecture
+
+```
+HET IT Control System/
+├── het_launcher.py          # Main launcher with update support
+├── run.py                   # Core application launcher
+├── app/                     # Main application code
+│   ├── config/             # Configuration management
+│   ├── infrastructure/     # Core services (DB, logging, scheduler)
+│   ├── services/           # Business logic services
+│   ├── gui/                # PySide6 GUI components
+│   ├── api/                # FastAPI REST API
+│   └── version.py          # Version information
+├── service/                # Windows service implementation
+├── setup/                  # First-time setup wizard
+├── updater/                # Auto-update system
+├── packaging/              # Build and packaging scripts
+└── jobs/                   # Job definitions
+```
+
+## 🎯 Features
+
+### Professional Deployment
+- **Windows Service**: Auto-start scheduler service
+- **Single Executable**: PyInstaller packaged application
+- **Auto-Updates**: Built-in update mechanism
+- **Setup Wizard**: Guided first-time configuration
+
+### Enterprise Monitoring
+- **Real-time System Monitoring**: CPU, RAM, disk usage
+- **Job Failure Alerts**: Email and desktop notifications
+- **Health Dashboard**: System status indicators
+- **Multi-channel Alerts**: Email, Telegram, desktop
+
+### Production Ready
+- **Portable Database**: SQLite with WAL mode
+- **Structured Logging**: JSON logging with rotation
+- **Error Recovery**: Comprehensive exception handling
+- **Graceful Shutdown**: Proper cleanup on exit
+
+## 🛠️ Usage
+
+### GUI Application
+```bash
+# Launch GUI
+het_launcher.exe gui
+# or
+python het_launcher.py gui
+```
+
+### Windows Service
+```bash
+# Install service
+het_launcher.exe service install
+
+# Start service
+het_launcher.exe service start
+
+# Check status
+het_launcher.exe service status
+
+# Stop service
+het_launcher.exe service stop
+
+# Uninstall service
+het_launcher.exe service uninstall
+```
+
+### Setup Wizard
+```bash
+# Run setup
+het_launcher.exe setup
+```
+
+### Updates
+```bash
+# Check for updates
+het_launcher.exe update
+
+# Apply updates
+het_launcher.exe update --apply
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+Create a `.env` file in the application directory:
+
+```env
+# Database
+DATABASE_URL=sqlite:///data/app.db
+
+# Email Configuration
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+SENDER_EMAIL=your-email@gmail.com
+SENDER_PASSWORD=your-app-password
+
+# Logging
+LOG_LEVEL=INFO
+LOG_MAX_BYTES=10485760
+LOG_BACKUP_COUNT=5
+
+# API
+API_HOST=localhost
+API_PORT=8000
+API_DEBUG=false
+```
+
+### Service Configuration
+The Windows service runs automatically and can be managed through:
+- Windows Services Manager
+- Command line tools
+- Application shortcuts
+
+## 📁 Directory Structure
+
+After installation, the application creates:
+
+```
+%PROGRAMFILES%\HET IT Control System\    # Application files
+%APPDATA%\HET IT Control System\        # User data
+├── logs\                              # Application logs
+├── database\                          # SQLite databases
+└── config\                            # Configuration files
+```
+
+## 🏗️ Building from Source
+
+### Prerequisites
+- Python 3.11+
+- PyInstaller
+- NSIS (for installer creation)
+
+### Build Steps
+```bash
+# Install build dependencies
+pip install pyinstaller
+
+# Build executable
+cd packaging
+.\build.bat
+
+# Create installer (requires NSIS)
+makensis installer.nsi
+```
+
+## 🔄 Auto-Update System
+
+The application includes a built-in update system:
+
+- **Version Checking**: Automatic version comparison
+- **Secure Downloads**: SHA256 hash verification
+- **Backup Creation**: Automatic backup before updates
+- **Rollback Support**: Restore from backup on failure
+
+## 📊 Monitoring & Alerting
+
+### System Monitoring
+- CPU usage percentage
+- Memory usage
+- Disk space monitoring
+- Scheduler heartbeat
+
+### Alert Channels
+- **Email**: SMTP-based notifications
+- **Desktop**: Windows toast notifications
+- **Telegram**: Bot-based messaging (future)
+
+### Health Indicators
+- Green: System healthy
+- Yellow: Warning conditions
+- Red: Critical issues
+
+## 🐛 Troubleshooting
+
+### Service Won't Start
+1. Check Windows Event Viewer for errors
+2. Verify Python and dependencies are installed
+3. Check service permissions
+
+### GUI Won't Launch
+1. Ensure PySide6 is properly installed
+2. Check display settings
+3. Try running from command line for error messages
+
+### Database Issues
+1. Check file permissions on database directory
+2. Verify SQLite installation
+3. Check disk space
+
+## 📝 Version History
+
+See `app/version.py` for detailed version information and changelog.
+
+## 🤝 Support
+
+For support and issues:
+- Check the logs in `%APPDATA%\HET IT Control System\logs\`
+- Review Windows Event Viewer
+- Contact system administrator
+
+## 📄 License
+
+[Add your license information here]
+
+---
+
+**HET IT Control System** - Enterprise Automation Made Simple
 
 A professional enterprise-grade IT automation and monitoring system built with Python.
 
@@ -395,5 +652,5 @@ For support, please contact:
 
 ---
 
-**HET IT Control System v1.0.0**
+**het IT Control System v1.0.0**
 *Enterprise IT Automation & Monitoring*

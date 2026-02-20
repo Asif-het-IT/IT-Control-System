@@ -46,5 +46,5 @@ apscheduler==3.10.4
 # Environment
 python-dotenv==1.2.1
 
-# Additional utilities
-typing-extensions==4.15.0
+# Windows Service Support
+pywin32==306; sys_platform == "win32"

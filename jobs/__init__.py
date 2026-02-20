@@ -1,2 +1,2 @@
 # jobs/__init__.py
-# Empty file — Python package ke liye placeholder
+# shim package for legacy imports

@@ -15,7 +15,12 @@ if getattr(sys, 'frozen', False):
     application_path = Path(sys.executable).parent
 else:
     # Running as script
-    application_path = Path(__file__).parent
+    try:
+        application_path = Path(__file__).parent
+    except NameError:
+        # __file__ not defined (e.g., in PyInstaller spec analysis)
+        import os
+        application_path = Path(os.getcwd())
 
 # Add application path to Python path
 if str(application_path) not in sys.path:
